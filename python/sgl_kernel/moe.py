@@ -599,8 +599,8 @@ def fused_experts(
         or FP16 activations -- no dequantized weight tensor is materialized
         on device. On Xe3 (CRI), routes through
         moe_grouped_mm_nt_xe35_mxfp4_w4a16 instead (mxfp4-only, no
-        zero-point/g_idx support, group_size fixed at 32, activation
-        limited to silu/swiglu_deepseek_v4, and bias unsupported -- see
+        zero-point/g_idx support, group_size fixed at 32, and GEMM1 is
+        always run unfused with the activation applied separately -- see
         that op's AOT instantiation matrix in
         src/GroupGemmMxfp4W4A16Xe35.cmake); the E8M0 scale bytes are
         decoded to fp32 direct multipliers on the host before the call,
@@ -1091,21 +1091,6 @@ def fused_experts(
     # the recovered (unpacked) N — w2.shape[2] is the packed I/2 under MXFP4,
     # which would mis-detect the gated case as non-gated (gate_factor=1).
     gate_factor = 2 if (2 * N == w1.shape[1]) else 1
-
-    if use_mxfp4_xe3:
-        # moe_grouped_mm_nt_xe35_mxfp4_w4a16's AOT instantiation matrix is
-        # pruned to activation_type in {0 silu, 4 swiglu_deepseek_v4} and
-        # WithBias=false (see src/GroupGemmMxfp4W4A16Xe35.cmake); fail fast
-        # with a clear message instead of letting the op's own TORCH_CHECK
-        # fire deeper in the call stack.
-        assert activation_type in (0, 4), (
-            "moe_grouped_mm_nt_xe35_mxfp4_w4a16 only supports activation_type "
-            f"0 (silu) or 4 (swiglu_deepseek_v4); got {activation_type} "
-            f"(activation={activation!r})"
-        )
-        assert (
-            b1 is None and b2 is None
-        ), "moe_grouped_mm_nt_xe35_mxfp4_w4a16 does not support bias (b1/b2 must be None)"
 
     # Heuristic for choosing fused vs unfused activation. The K*N threshold
     # mirrors the small-weight cutoff in the C++ grouped-GEMM dispatchers

@@ -23,23 +23,25 @@ endfunction()
 #   <_256, _256, _32> / SG_8_4_1   -- avg_m > 128,  fuse_act=false
 #
 # TEMPORARY L0-module-pressure workaround: generate only the variants
-# actually dispatched (activation_type=0 silu and activation_type=4
-# swiglu_deepseek_v4, with_bias=false), skipping the full act x bias
-# cartesian product. This keeps the AOT-compiled MXFP4 .so count small,
-# which is necessary to keep the Level Zero driver below its per-context
-# module cap under TP>1. Matching dispatch-side prune lives in
+# actually dispatched, skipping the full act x fuse x bias cartesian product.
+# This keeps the AOT-compiled MXFP4 .so count small, which is necessary to
+# keep the Level Zero driver below its per-context module cap under TP>1.
+#   - fuse_act=true:  act_type 0 = silu, 4 = swiglu_deepseek_v4, with_bias=false
+#   - fuse_act=false: the epilogue never reads act_type, so a single act_type=0
+#     build serves every activation (the caller applies it afterwards); built
+#     with and without bias (bias is needed by e.g. gpt-oss).
+# Matching dispatch-side prune lives in
 # src/sycl/kernels/moe/xe35/GroupGemmMxfp4W4A16.hpp.
-#   act_type 0 = silu, 4 = swiglu_deepseek_v4 (clamp gate/up then silu*up)
-set(with_bias false)
 foreach(act_type 0 4)
-    foreach(fuse_act true false)
-        add_group_gemm_mxfp4_w4a16_xe35_inst("_8" "_64" "_32" "_1, _4, _1" "_4, _1, _0" ${act_type} ${fuse_act} ${with_bias})
-    endforeach()
+    add_group_gemm_mxfp4_w4a16_xe35_inst("_8" "_64" "_32" "_1, _4, _1" "_4, _1, _0" ${act_type} true false)
+    add_group_gemm_mxfp4_w4a16_xe35_inst("_128" "_64" "_32" "_4, _2, _1" "_2, _1, _0" ${act_type} true false)
+    add_group_gemm_mxfp4_w4a16_xe35_inst("_256" "_64" "_32" "_8, _2, _1" "_2, _1, _0" ${act_type} true false)
+endforeach()
 
-    add_group_gemm_mxfp4_w4a16_xe35_inst("_128" "_64" "_32" "_4, _2, _1" "_2, _1, _0" ${act_type} true ${with_bias})
-    add_group_gemm_mxfp4_w4a16_xe35_inst("_128" "_128" "_32" "_4, _2, _1" "_2, _1, _0" ${act_type} false ${with_bias})
-    add_group_gemm_mxfp4_w4a16_xe35_inst("_256" "_64" "_32" "_8, _2, _1" "_2, _1, _0" ${act_type} true ${with_bias})
-    add_group_gemm_mxfp4_w4a16_xe35_inst("_256" "_256" "_32" "_8, _4, _1" "_4, _1, _0" ${act_type} false ${with_bias})
+foreach(with_bias false true)
+    add_group_gemm_mxfp4_w4a16_xe35_inst("_8" "_64" "_32" "_1, _4, _1" "_4, _1, _0" 0 false ${with_bias})
+    add_group_gemm_mxfp4_w4a16_xe35_inst("_128" "_128" "_32" "_4, _2, _1" "_2, _1, _0" 0 false ${with_bias})
+    add_group_gemm_mxfp4_w4a16_xe35_inst("_256" "_256" "_32" "_8, _4, _1" "_4, _1, _0" 0 false ${with_bias})
 endforeach()
 
 list(APPEND device_cpp_xe35 ${GROUP_GEMM_MXFP4_W4A16_XE35_INST_SRCS})
